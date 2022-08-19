@@ -1,0 +1,191 @@
+// SPDX-Licence-Identifier: MIT
+pragma solidity ^0.8.4;
+
+
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Counters.sol";
+
+contract NFTContract is ERC721Enumerable, Ownable {
+    using Strings for uint256;
+    using Counters for Counters.Counter;
+
+    Counters.Counter private supply;
+
+    string public uriPrefix = "ipfs://QmVjKqPEvZobdpyaZfLLh4AcFYgeeXAgWkDYYcV3WPdFcG/";
+    string public uriSuffix = ".json";
+    string public hiddenMetadataUri;
+
+    uint256 public publicsaleCost = .05 ether;
+
+    uint256 public MAX_FREE_MINT = 2;
+    uint256 public MAX_PUBLIC_MINT = 8;
+    uint256 public maxSupply = MAX_FREE_MINT + MAX_PUBLIC_MINT;
+    uint256 public maxMintAmountPerTx = 5;
+    uint256 public nftPerAddressLimit = 5;
+    uint256 public maxFreeQtyPerWallet = 1;
+
+    bool public revealed = false;
+    bool public paused = false;
+
+    mapping(address => uint256) public addressMintedBalance;
+    mapping(address => uint256) public freeMintClaimed;
+    
+    constructor() ERC721("Moonbird", "MB") {
+        setHiddenMetadataUri("https://dummy-link.com/prereveal.json");
+    }
+
+    // Mint Compliance
+    modifier mintCompliance(uint256 _mintAmount) {
+        if (msg.sender != owner()) {
+            uint256 ownerMintedCount = addressMintedBalance[msg.sender];
+            require(ownerMintedCount + _mintAmount <= nftPerAddressLimit, "Max NFT per address exceeded");
+            require(_mintAmount > 0 && _mintAmount <= maxMintAmountPerTx, "Invalid mint amount");
+            require(supply.current() + _mintAmount < maxSupply, "Max supply exceeded");
+        }
+        _;
+    }
+
+    // Mint
+    function mint(uint256 _mintAmount) public payable mintCompliance(_mintAmount) {
+        require(!paused, "The contract is paused");
+        
+        if (msg.sender != owner()) {
+            require(msg.value >= publicsaleCost * _mintAmount, "Insufficient funds!");
+        }
+        updatePublicMint(_mintAmount);
+        _mintLoop(msg.sender, _mintAmount);
+
+    }
+
+    // Free Mint
+    function freeMint(uint256 _mintAmount) external payable {
+        require(!paused, "Sale is not active!");
+        require(_mintAmount <= maxFreeQtyPerWallet, "Free mint limit exceeded!");
+        require(freeMintClaimed[msg.sender] < maxFreeQtyPerWallet, "Already claimed free mint!");
+        require(_mintAmount + addressMintedBalance[msg.sender] <= maxFreeQtyPerWallet, "Exceeded the limit");
+        require(totalSupply() + _mintAmount <= maxSupply, "Not enough tokens left");
+        freeMintClaimed[msg.sender] += _mintAmount;
+        updateFreeMint(_mintAmount);
+        _mintLoop(msg.sender, _mintAmount);
+    }
+
+    // Mint for Addresses
+    function mintForAddress( uint256 _mintAmount, address _reciever) public mintCompliance(_mintAmount) onlyOwner {
+        _mintLoop(_reciever, _mintAmount);
+    }
+
+
+    // Mint Loop
+    function _mintLoop(address _reciever, uint256 _mintAmount) internal {
+        for (uint256 i = 0; i < _mintAmount; i++) {
+            supply.increment();
+            addressMintedBalance[msg.sender]++;
+            _safeMint(_reciever, supply.current());
+        }
+    }
+
+    // Total Supply
+    function totalSupply() public override view returns(uint256) {
+        return supply.current();
+    }
+
+    function updateFreeMint(uint256 _quantity) internal {
+        MAX_FREE_MINT -= _quantity;
+    }
+
+    function updatePublicMint(uint256 _quantity) internal {
+        MAX_PUBLIC_MINT -= _quantity;
+    }
+
+
+    // Wallet of Owner
+    function walletOfOwner(address _owner) public view returns (uint256[] memory) {
+        uint256 ownerTokenCount = balanceOf(_owner);
+        uint256[] memory ownedTokenIds = new uint256[](ownerTokenCount);
+        uint256 currentTokenId = 1;
+        uint256 ownedTokenIndex = 0;
+
+        while (ownedTokenIndex < ownerTokenCount && currentTokenId <= maxSupply) {
+            address currentTokenOwner = ownerOf(currentTokenId);
+
+            if(currentTokenOwner == _owner) {
+                ownedTokenIds[ownedTokenIndex] = currentTokenId;
+                ownedTokenIndex++;
+            }
+            
+            currentTokenId++;
+        }
+
+        return ownedTokenIds;
+    }
+
+    // Token URI
+    function tokenURI(uint256 _tokenId) public view virtual override returns (string memory) {
+        require(_exists(_tokenId), "ERC721Metadata: URI query for nonexistent token");
+
+        if (revealed == false) {
+            return hiddenMetadataUri;
+        }
+
+        string memory currentBaseURI = _baseURI();
+        return bytes(currentBaseURI).length > 0 ? string(abi.encodePacked(currentBaseURI, _tokenId.toString(), uriSuffix)) : "";
+    }
+
+    function claimedFreeMint() public view returns (bool) {
+        return freeMintClaimed[msg.sender] == maxFreeQtyPerWallet;
+    }
+
+    // Set Max Mint Amount Per TX
+    function setMaxMintAmountPerTx(uint256 _maxMintAmountPerTx)  public onlyOwner {
+        maxMintAmountPerTx = _maxMintAmountPerTx;
+    }
+
+    // Set Publicsale Cost
+    function setPublicsaleCost(uint256 _cost) public onlyOwner {
+        publicsaleCost = _cost;
+    }
+
+
+    // Set Hidden Metadata URI
+    function setHiddenMetadataUri(string memory _hiddenMetadataUri) public onlyOwner {
+        hiddenMetadataUri = _hiddenMetadataUri;
+    }
+
+    // Set URI Prefix
+    function setUriPrefix(string memory _uriPrefix) public onlyOwner {
+        uriPrefix = _uriPrefix;
+    }
+
+    // Set URI Sufix
+    function setUriSuffix(string memory _uriSuffix) public onlyOwner {
+        uriSuffix = _uriSuffix;
+    }
+
+    // Set Paused 
+    function setPaused(bool _state) public onlyOwner {
+        paused = _state;
+    }
+
+    // Get Cost
+    function cost() public view returns(uint256) {
+        return publicsaleCost;
+    }
+
+    // Set Revealed 
+    function setRevealed(bool _state) public onlyOwner {
+        revealed = _state;
+    }
+
+    // Base URI
+    function _baseURI() internal view virtual override returns (string memory) {
+        return uriPrefix;
+    }
+
+    // Withdraw
+    function withDraw() public onlyOwner {
+        (bool os, ) = payable(owner()).call{value: address(this).balance}("");
+        require(os);
+    }
+}

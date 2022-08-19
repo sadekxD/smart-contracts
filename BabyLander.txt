@@ -1,0 +1,147 @@
+// File: contracts/BabyLander.sol
+
+
+pragma solidity >=0.4.22 <0.9.0;
+
+
+
+
+contract OwnableDelegateProxy {}
+
+contract ProxyRegistry {
+    mapping(address => OwnableDelegateProxy) public proxies;
+}
+
+contract BabyLander is Ownable, ERC721 {
+    uint256 public constant TOTAL_MAX_QTY = 10;
+    uint256 public constant FREE_MINT_MAX_QTY = 2;
+    uint256 public constant PAID_MINT_MAX_QTY = 8;
+    uint256 public constant TOTAL_MINT_MAX_QTY =
+        FREE_MINT_MAX_QTY + PAID_MINT_MAX_QTY;
+    uint256 public constant GIFT_MAX_QTY = 0;
+    uint256 public constant PRICE = 0.038 ether;
+    uint256 public constant MAX_QTY_PER_WALLET = 10;
+    uint256 public maxFreeQtyPerWallet = 1;
+    uint256 public mintedQty = 0;
+    uint256 public giftedQty = 0;
+    uint256 public mintedfreemint = 0;
+    uint256 public mintedpublicmint = 0;
+    uint256 public storemintedfreemint = 0;
+    mapping(address => uint256) public minterToTokenQty;
+    address proxyRegistryAddress;
+    string public baseURI = "";
+    string public baseExtension = ".json";
+    constructor
+    (string memory _initBaseURI) 
+    ERC721("BabyLander", "BL") 
+    {setBaseURI(_initBaseURI);}
+
+
+    function tokenURI(uint256 _tokenId)
+    public
+    view
+    virtual
+    override
+    returns (string memory)
+
+  {
+    require(
+      _exists(_tokenId),
+      "ERC721Metadata: URI query for nonexistent token"
+    );
+
+    string memory currentBaseURI = _baseURI();
+    return bytes(currentBaseURI).length > 0
+        ? string(abi.encodePacked(currentBaseURI,Strings.toString(_tokenId) , baseExtension))
+        : "";
+  }
+
+
+    function totalSupply() public view returns (uint256) {
+        return mintedQty ;  
+    }
+
+    function _baseURI() internal view virtual override returns (string memory) {
+    return baseURI;
+  }
+
+    function remainingpublicmint() public view returns (uint256){
+        return PAID_MINT_MAX_QTY - mintedpublicmint;
+    }
+
+    function remainingtotalfreemint() public view returns (uint256) {
+        return FREE_MINT_MAX_QTY - mintedfreemint ; 
+    }
+
+
+     function updateFreeMintCount(address minter, uint256 count) public {
+        minterToTokenQty[minter] += count;
+    }
+
+    function mint(uint256 _mintQty) external payable {
+        // free
+ 
+            uint256 remainingFreeMint = maxFreeQtyPerWallet - minterToTokenQty[msg.sender];
+            if (remainingFreeMint > 0 && msg.value == 0){
+                 require(mintedfreemint + _mintQty <= FREE_MINT_MAX_QTY, "MAXL");
+                mintedfreemint = mintedfreemint + _mintQty;
+                updateFreeMintCount(msg.sender, remainingFreeMint);
+                uint256 totalSupplyBefore = totalSupply();
+                mintedQty += _mintQty;
+                for (uint256 i = 0; i < _mintQty; i++) {
+                    _mint(msg.sender, ++totalSupplyBefore); 
+                }
+                
+            }else{
+                require(mintedpublicmint + _mintQty <= TOTAL_MINT_MAX_QTY, "MAXL");
+           
+                require(msg.value >= PRICE * _mintQty, "SETH");
+                mintedpublicmint = mintedpublicmint + _mintQty;
+                uint256 totalSupplyBefore = totalSupply();
+                mintedQty += _mintQty;
+                for (uint256 i = 0; i < _mintQty; i++) {
+                    _mint(msg.sender, ++totalSupplyBefore); 
+                }
+            }
+           
+        
+
+ 
+    }
+
+
+    function withdrawAll() external onlyOwner {
+        require(address(this).balance > 0, "ZERO");
+        payable(msg.sender).transfer(address(this).balance);
+    }
+
+    function setMaxFreeQtyPerTx(uint256 _maxQtyPerTx) external onlyOwner {
+        maxFreeQtyPerWallet = _maxQtyPerTx;
+    }
+
+    function setProxyRegistryAddress(address proxyAddress) external onlyOwner {
+        proxyRegistryAddress = proxyAddress;
+    }
+
+    function isApprovedForAll(address owner, address operator)
+        public
+        view
+        override
+        returns (bool)
+    {
+        ProxyRegistry proxyRegistry = ProxyRegistry(proxyRegistryAddress);
+        if (address(proxyRegistry.proxies(owner)) == operator) {
+            return true;
+        }
+
+        return super.isApprovedForAll(owner, operator);
+    }
+
+    function setBaseURI(string memory _newBaseURI) public onlyOwner {
+    baseURI = _newBaseURI;
+  }
+
+  function setBaseExtension(string memory _newBaseExtension) public onlyOwner {
+    baseExtension = _newBaseExtension;
+  }
+}

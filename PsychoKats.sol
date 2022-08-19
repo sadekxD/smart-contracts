@@ -1,0 +1,139 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.4;
+
+import "./ERC721A.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Strings.sol"; 
+import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+
+contract Contract is ERC721A, Ownable {
+    using Strings for uint256;
+    
+    string public uriPrefix = "ipfs//QmaeN55Abjt8BTeFxvYm8xqud45HEVQv2aEoF1NskZ9BnR/";
+    string public uriSuffix = ".json";
+ 
+    // Merkle Tree Root Address  - Gas Optimisation
+    bytes32 public whitelistMerkleRoot;
+
+    uint256 MAX_MINTS = 4;
+    uint256 MAX_SUPPLY = 5150;
+    uint256 maxMintAmountPerTx = 4;
+    uint256 public mintRate = 0.07 ether;
+    uint256 public preSaleMintRate = .06 ether;
+    bool public paused = true;
+    bool public presale = false;
+
+    constructor() ERC721A("Psycho Kats", "PSK") {}
+
+    function mint(uint256 quantity) external payable {
+        // _safeMint's second argument now takes in a quantity, not a tokenId.
+        if (msg.sender != owner()) {
+            require(!paused, "Minting is paused!");
+            require(!presale, "Presale is active!");
+            require(quantity + _numberMinted(msg.sender) <= MAX_MINTS, "Exceeded the limit");
+            require(totalSupply() + quantity <= MAX_SUPPLY, "Not enough tokens left");
+            require(msg.value >= (mintRate * quantity), "Not enough ether sent");
+        }
+        _safeMint(msg.sender, quantity);
+    }
+
+    function _baseURI() internal view override returns (string memory) {
+        return uriPrefix;
+    }
+
+    // Token URI
+    function tokenURI(uint256 _tokenId) public view virtual override returns (string memory) {
+        require(_exists(_tokenId), "ERC721Metadata: URI query for nonexistent token");
+
+        string memory currentBaseURI = _baseURI();
+        return bytes(currentBaseURI).length > 0 ? string(abi.encodePacked(currentBaseURI, _tokenId.toString(), uriSuffix)) : "";
+    }
+
+    // Mint for Addresses
+    function mintForAddress( uint256 _mintAmount, address _reciever) public onlyOwner {
+        _safeMint(_reciever, _mintAmount);
+    }
+
+    // Set Merkle Root
+    function setWhitelistMerkleRoot(bytes32 merkleRoot) external onlyOwner {
+        whitelistMerkleRoot = merkleRoot;
+    }
+
+    // Check if user is whitelisted
+    modifier isValidMerkleProof(bytes32[] calldata merkleProof, bytes32 root) {
+        bytes32 leaf = keccak256(abi.encodePacked(msg.sender));
+        require(
+            MerkleProof.verify(
+                merkleProof,
+                root,
+                leaf
+            ),
+            "Address is not in the whitelist"
+        );
+        _;
+    }
+
+    // Whitelist mint
+    function mintWhitelist(bytes32[] calldata merkleProof, uint256 quantity)
+        public
+        payable
+        isValidMerkleProof(merkleProof, whitelistMerkleRoot)
+    {
+        require(!paused, "The contract is paused!");
+        require(presale, "Presale is paused!");
+        if (msg.sender != owner()) {
+            if (presale == true) {
+                require(quantity + _numberMinted(msg.sender) <= MAX_MINTS, "Exceeded the limit");
+                require(totalSupply() + quantity <= MAX_SUPPLY, "Not enough tokens left");
+                require(msg.value >= preSaleMintRate * quantity, "Not enough ether sent");
+            }
+        }
+
+        _safeMint(msg.sender, quantity);
+    }
+
+    // Set Max Mint Amount Per TX
+    function setMaxMintAmountPerTx(uint256 _maxMintAmountPerTx)  public onlyOwner {
+        maxMintAmountPerTx = _maxMintAmountPerTx;
+    }
+
+    // Set Max Supply
+    function setMaxSupply(uint256 _amount)  public onlyOwner {
+        MAX_SUPPLY = _amount;
+    }
+
+    // Set Max Mints
+    function setMaxMints(uint256 _amount) public onlyOwner {
+        MAX_MINTS = _amount;
+    }
+
+    // Set Mint Rate
+    function setMintRate(uint256 _cost) public onlyOwner {
+        mintRate = _cost;
+    }
+
+    // Set URI Prefix
+    function setUriPrefix(string memory _uriPrefix) public onlyOwner {
+        uriPrefix = _uriPrefix;
+    }
+
+    // Set URI Sufix
+    function setUriSuffix(string memory _uriSuffix) public onlyOwner {
+        uriSuffix = _uriSuffix;
+    }
+
+    // Set Presale Cost
+    function setPresaleMintRate(uint256 _cost) public onlyOwner {
+        preSaleMintRate = _cost;
+    }
+
+    // Set Paused 
+    function setPaused(bool _state) public onlyOwner {
+        paused = _state;
+    }
+
+    // Withdraw
+    function withdraw() external payable onlyOwner {
+        payable(owner()).transfer(address(this).balance);
+    }
+}
